@@ -1,0 +1,158 @@
+library(rjson)
+library(tidyverse)
+library(viridis)
+
+
+temp <- rjson::fromJSON(file="~/Desktop/UiO ECON/2021 exams/ECON4170/Assignment/data/US_category_id.json") ##read the JSON file with category IDs and genres
+
+##List of countries in the available dataset and their ISO codes
+listofcountries <- c("BR", "CA", "DE", "FR", "GB", "IN", "JP", "KR", "MX", "RU", "US")
+countrynames <- c("Brazil", "Canada", "Germany", "France", "UK", "India", "Japan", "South Korea", "Mexico", "Russia", "USA")
+
+
+##Harvest genre categories for corresponding ids for the main dataset
+MatrixID <- data.frame(matrix(ncol = 2, nrow = 0))
+colnames(MatrixID) <- c('categoryid', 'Genre')
+
+i=1
+for (i in 1:length(temp[["items"]])) { ##create a dataframe with IDs and genres out of the JSON file
+  id <- temp[["items"]][[i]][["id"]]
+  genre <- temp[["items"]][[i]]$snippet$title
+  tempframe <- data.frame(categoryid=id, Genre=genre)
+  MatrixID[nrow(MatrixID) + 1,] = c(tempframe)
+}
+
+
+##Construct a dataframe to be used later in a loop for main dataset
+MainData <- read.csv("~/Desktop/UiO ECON/2021 exams/ECON4170/Assignment/data/BR_youtube_trending_data.csv")
+MainData$Genre <- MatrixID$Genre[match(MainData$categoryId, MatrixID$categoryid)] ##add a genre to each video based on category ID
+MainData$Country <- countrynames[1]
+
+
+##Combine data into one main dataset
+i=2
+for (i in 2:length(listofcountries)) {
+  temp <- read.csv(paste0("~/Desktop/UiO ECON/2021 exams/ECON4170/Assignment/data/", listofcountries[i], "_youtube_trending_data.csv"))
+  temp$Genre <- MatrixID$Genre[match(temp$categoryId, MatrixID$categoryid)]
+  temp$Country <- countrynames[i]
+  MainData <- rbind(MainData, temp)
+}
+
+
+rm(tempframe, temp, id, genre) ##clean up the environment
+
+
+##Manipulate dates for analysis
+MainData$trending_date <- as.Date(MainData$trending_date)
+MainData$publishedAt <- as.Date(MainData$publishedAt)
+MainData$Month<-months(MainData$publishedAt)
+MainData$Year<-format(MainData$publishedAt,format="%y")
+
+
+##Several variables for more compelling analysis
+MainData$likedislikeratio <- MainData$likes/MainData$dislikes ##Like-to-Dislike Ratio
+MainData$viewspercomment <- MainData$view_count/MainData$comment_count ##views per comment, proxy for engagement
+MainData$viewsperlike <- MainData$view_count/MainData$likes ##views per like, proxy for support
+MainData$daystotrending <- MainData$trending_date-MainData$publishedAt
+
+
+#################
+## Graphs
+#################
+globe <- map_data("world") ##Our main world map
+globe <- subset(globe, region != "Antarctica")
+
+##Average views per trending video
+AverageViews <-aggregate(view_count~Country, MainData, mean)
+
+ggplot(AverageViews) +
+  geom_map(
+    dat = globe, map = globe, aes(map_id = region),
+    fill = "light gray", color = "#7f7f7f", size = 0.25) +
+  geom_map(map = globe, aes(map_id = Country, fill = view_count), size = 0.4) +
+  scale_fill_gradient(low = "#d8ffbc", high = "#083808", name = "Views") +
+  expand_limits(x = globe$long, y = globe$lat) +
+  ggtitle("Average views per trending video") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  theme(axis.text.y = element_blank()) +
+  theme(axis.text.x = element_blank()) +
+  ylab("") + xlab("")
+
+
+##Find the most popular genre for each country for each country (excluding Music)
+MeanByMonth <- aggregate(view_count~Month+Year+Genre+Country, MainData, mean)
+MeanTotal <- aggregate(view_count~Genre+Country, MeanByMonth, mean)
+SubMeanTotal <- subset(MeanTotal, Genre!="Music")
+PopGenre <- SubMeanTotal %>% group_by(Country) %>% top_n(1, view_count)
+
+ggplot(PopGenre) +
+  geom_map(dat = globe, map = globe, aes(map_id = region),
+    fill = "light gray", color = "#7f7f7f", size = 0.25) +
+  geom_map(map = globe, aes(map_id = Country, fill = Genre), size = 0.4) +
+  expand_limits(x = globe$long, y = globe$lat) +
+  ggtitle("Most popular genre") +
+  scale_fill_viridis(discrete = TRUE) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  theme(axis.text.y = element_blank()) +
+  theme(axis.text.x = element_blank()) +
+  ylab("") + xlab("")
+
+
+##Find category for the most supportive viewers for each country (views per like)
+MainData <- MainData%>% 
+  filter_if(~is.numeric(.), all_vars(!is.infinite(.))) ##drop missing values
+MeanByMonth <- aggregate(viewsperlike~Month+Year+Genre+Country, MainData, mean)
+MeanTotal <- aggregate(viewsperlike~Genre+Country, MeanByMonth, mean)
+VPL <- MeanTotal %>% group_by(Country) %>% top_n(-1, viewsperlike) ##Least views per one comment indicating most support
+
+ggplot(VPL) +
+  geom_map(dat = globe, map = globe, aes(map_id = region),
+           fill = "light gray", color = "#7f7f7f", size = 0.25) +
+  geom_map(map = globe, aes(map_id = Country, fill = Genre), size = 0.4) +
+  expand_limits(x = globe$long, y = globe$lat) +
+  ggtitle("Most supportive viewer category") +
+  scale_fill_viridis(discrete = TRUE) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  theme(axis.text.y = element_blank()) +
+  theme(axis.text.x = element_blank()) +
+  ylab("") + xlab("")
+
+
+##Find most engaging viewers for each country for each category (views per comment)
+MeanByMonth <- aggregate(viewspercomment~Month+Year+Genre+Country, MainData, mean)
+MeanTotal <- aggregate(viewspercomment~Genre+Country, MeanByMonth, mean)
+VPC <- MeanTotal %>% group_by(Country) %>% top_n(-1, viewspercomment)
+
+ggplot(VPC) +
+  geom_map(dat = globe, map = globe, aes(map_id = region),
+           fill = "light gray", color = "#7f7f7f", size = 0.25) +
+  geom_map(map = globe, aes(map_id = Country, fill = Genre), size = 0.4) +
+  expand_limits(x = globe$long, y = globe$lat) +
+  ggtitle("Most engaging viewer category") +
+  scale_fill_viridis(discrete = TRUE) +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5, size=16, face="bold")) +
+  theme(axis.text.y = element_blank()) +
+  theme(axis.text.x = element_blank()) +
+  ylab("") + xlab("")
+
+
+##Graph change in preferences for US
+MeanByMonth <- aggregate(view_count~Month+Year+Genre+Country, MainData, mean)
+SubsetUS <- subset(MeanByMonth, Country=="USA")
+SubsetUS$Date <- with(SubsetUS, sprintf("%s-%02s", Year, Month))
+SubsetUS$Date <- paste(SubsetUS$Date,"-01",sep="")
+SubsetUS$view_count <- SubsetUS$view_count/10000 ##better understanding of numbers
+
+
+##Stacker bar chart
+ggplot(dat = SubsetUS, aes(fill=Genre, y=view_count, x=Month)) + 
+  geom_bar(position="stack", stat="identity") + 
+  theme_minimal() +
+  scale_fill_viridis(discrete = TRUE) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle("Monthly average views by category, USA") +
+  ylab("View count, tens of thousands") + xlab("Year, month")
