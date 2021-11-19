@@ -2,7 +2,7 @@ library(rjson)
 library(tidyverse)
 library(viridis)
 
-Data available at: https://www.kaggle.com/rsrishav/youtube-trending-video-dataset
+##Data available at: https://www.kaggle.com/rsrishav/youtube-trending-video-dataset
 
 temp <- rjson::fromJSON(file="~/Desktop/UiO ECON/2021 exams/ECON4170/Assignment/data/US_category_id.json") ##read the JSON file with category IDs and genres
 
